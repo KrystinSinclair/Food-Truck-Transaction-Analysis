@@ -1,6 +1,6 @@
-#Mamas Cuban Kitchen
+# Mamas Cuban Kitchen
 
-#Data Analysis Memorandum
+# Data Analysis Memorandum
 
   To perform analysis adjustments were performed. These data include anonymized transactional data from August through December 2018.
 From the social media accounts, location data was added in as well if it were an event or a day on the street. Historical weather data was
