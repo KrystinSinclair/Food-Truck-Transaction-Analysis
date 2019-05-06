@@ -1,0 +1,515 @@
+---
+title: "mamascubankitchen"
+author: "Krystin sinclair"
+date: "March 24, 2019"
+output: html_document
+---
+
+Load in the two spreadsheets
+1. Transactionial database
+2. Supplemental data on event type and meal type
+```{r loaddata}
+transactions <- read.csv(file="mamascubankitchen_anonymized.csv", header=TRUE, sep=",")
+library(readxl)
+supplemental <- read.csv(file="mamascubankitchen_additionaldata.csv", header=TRUE, sep=",")
+groupeditems <- read_excel("mamascubankitchen_groupedmenuitems.xlsx")
+```
+create new table that is grouped by date and has features of date, month, day of week) mealtype, location, event type, if a discount was offered, quantity sold of each menu item, total items sold, and sum of sales
+```{r table}
+#first step is to group the menu items
+transaction_groupeditems <- merge(transactions, groupeditems, all.x = TRUE)
+```
+Lets deal with the negative values
+```{r absolute}
+transaction_groupeditems$Qty <- abs(transaction_groupeditems$Qty)
+transaction_groupeditems$Net.Sales <- abs(transaction_groupeditems$Net.Sales)
+transaction_groupeditems$Gross.Sales <- abs(transaction_groupeditems$Gross.Sales)
+transaction_groupeditems$Tax <- abs(transaction_groupeditems$Tax)
+```
+
+```{r group}
+library(magrittr) 
+library(dplyr)
+#we want to group by date and see total quanttty sold and total net sales
+#create new dataframe of only date, quantity and net sales
+#Group by date to get sum of qty and netsales for each date
+
+
+totalsold <- transactions %>%
+select(Date, Qty, Net.Sales) %>%
+group_by(transactions$Date) %>%
+summarise(Qty = sum(Qty), Net.Sales = sum(Net.Sales))
+
+# drop observation with 0 items sold
+totalsold<-subset(totalsold, Qty!=0)
+
+#rename date column
+names(totalsold)[1]<-"Date"
+names(supplemental)[1] <-"Date"
+
+#merge total sold with supplemental
+totalsoldwithsupplementaldata <- merge(totalsold, supplemental, all.x = TRUE)
+
+```
+
+```{r category}
+#create table with date as row index and named item as column headers with count in the cells
+library(reshape)
+library(reshape2)
+library(rpivotTable)
+#install.packages('rpivotTable')
+items <- transaction_groupeditems[c("Date","nameditem", "Qty")]
+# specify the row headings
+#install.packages('pivottabler')
+library(pivottabler)
+pt <- PivotTable$new()
+pt$addData(items)
+pt$addColumnDataGroups("nameditem")
+pt$addRowDataGroups("Date", addTotal=FALSE)  
+pt$defineCalculation(calculationName="quantityofitems", summariseExpression="sum(Qty)")
+pt$renderPivot()
+items <- pt$asDataFrame()
+```
+
+```{r null}
+#replace null values with 0 in pivot
+#install.packages("imputeTS")
+library("imputeTS")
+items <- na.replace(items, 0)
+
+#delete obs when there aree no sold items
+# drop observation with 0 items sold
+items<-subset(items, Total!=0)
+
+#make date  a column instead of row names
+library(tibble)
+items<- items %>% rownames_to_column("Date")
+
+```
+
+```{r merge}
+#merge the filled pivot with the totalsoldand supplemntal data
+datatable <- merge(totalsoldwithsupplementaldata, items, all.x = TRUE)
+
+#add in weather and join 
+weather <- read_excel("weather.xlsx", sheet=2)
+
+datatable$Date <- as.Date(datatable$Date, format = "%m/%d/%Y")
+weather$Date <- as.Date(weather$Date, format = "%m/%d/%Y")
+
+#merge
+dataframe <- merge(datatable, weather, all.x = TRUE)
+
+
+```
+
+```{r date}
+#get month and day of week from date
+library(lubridate)
+dataframe$month <- month(dataframe$Date)
+dataframe$dayofweek <-  weekdays(as.POSIXct(dataframe$Date), abbreviate = T)
+```
+
+```{r dropexcescolumn}
+dataframe <- subset(dataframe, select=-Total)
+
+```
+
+We want to see the categorical variables and treat them correeclty for analysis
+```{r factors}
+dataframe$dayofweek <- factor(dataframe$dayofweek)
+dataframe$month <- factor(dataframe$month)
+```
+
+
+```{r proportions}
+proportion <- dataframe
+
+#columns we want proportions on 
+
+names <- c('beverage','chicken', 'cuban sandwhich', 'dessert', 'daily special', 'empanadas', 'pork', 'sides')
+
+for (n in names)
+{
+  proportion[, n] <- proportion[, n]/proportion$Qty
+
+}
+
+```
+
+Lets look at the proportion of each item across dates
+```{r proportionalitems}
+for (n in names)
+{
+  print(n)
+  print(summary(proportion[, n]))
+}
+
+```
+```{r plotitems}
+library(ggplot2)
+bevplot <- ggplot(dataframe, aes(x=Date, y=Net.Sales, colour=beverage))  + geom_point(size=2) 
+bevplot
+
+chickplot <- ggplot(dataframe, aes(x=Date, y=Net.Sales, colour=chicken))  + geom_point(size=2) 
+chickplot
+
+cubplot <- ggplot(dataframe, aes(x=Date, y=Net.Sales, colour=`cuban sandwhich`))  + geom_point(size=2) 
+cubplot
+
+dayplot <- ggplot(dataframe, aes(x=Date, y=Net.Sales, colour=`daily special`))  + geom_point(size=2) 
+dayplot
+
+dessplot <- ggplot(dataframe, aes(x=Date, y=Net.Sales, colour=dessert))  + geom_point(size=2) 
+dessplot
+
+emplot <- ggplot(dataframe, aes(x=Date, y=Net.Sales, colour=empanadas))  + geom_point(size=2) 
+emplot
+
+porkplot <- ggplot(dataframe, aes(x=Date, y=Net.Sales, colour=pork))  + geom_point(size=2) 
+porkplot
+
+sidesplot <- ggplot(dataframe, aes(x=Date, y=Net.Sales, colour=sides))  + geom_point(size=2) 
+sidesplot
+
+qtyplot <- ggplot(dataframe, aes(x=Date, y=Net.Sales, colour=Qty))  + geom_point(size=2) 
+qtyplot
+
+```
+
+LEts see if net sales and qty distrubiton looks like
+```{r linear}
+
+summary(dataframe$Net.Sales)
+hist(dataframe$Net.Sales)
+
+summary(dataframe$Qty)
+hist(dataframe$Qty)
+
+
+```
+
+Create a Sales dataframe that has teh information we need to predict future sales
+
+```{r cleanup}
+#first remove columns that we only know after the event
+Sales <- subset(dataframe, select=-Qty)
+
+#we want to know which items were on the menu for each date
+
+# we dont know how much of each item we will sell, but we do know if wew will sell the item
+for (n in names)
+{
+  Sales[, n] [Sales[, n] != 0] <- 1
+
+}
+
+#create new column that sums the menu items to see how many items were available on that date
+
+Sales$items <- Sales$beverage + Sales$chicken + Sales$`cuban sandwhich`+ Sales$`daily special`+ Sales$dessert+ Sales$empanadas+ Sales$pork + Sales$sides
+
+#drop the columns for specific menu items
+Sales$beverage <- Sales$chicken <- Sales$`cuban sandwhich` <- Sales$`daily special`<- Sales$dessert <- Sales$empanadas <- Sales$pork <- Sales$sides <- NULL
+
+Sales$items <- factor(Sales$items)
+```
+ Let's explore our DAtaframe
+```{r exploration}
+str(Sales)
+summary(Sales)
+```
+
+
+
+We want to view how these features relate to our variable of interest Net.Sales
+```{r Sales}
+
+#create a list of colnames
+ 
+features <- colnames(Sales)
+
+
+for (n in features)
+{
+  plot(Sales[, n], Sales$Net.Sales, main=n, xlab= n, ylab="Net Sales ($)")
+
+}
+```
+
+```{r twofeatureplot}
+#plot date and event type
+library(ggplot2)
+
+a <- ggplot(Sales, aes(x=Date, y=Net.Sales, colour=location)) + geom_point(size=2) 
+a
+
+b <- ggplot(Sales, aes(x=Date, y=Net.Sales, colour=mealtype, shape=event.type)) + geom_point(size=2) 
+b
+
+c<- ggplot(Sales, aes(x=Date, y=Net.Sales, colour=Temperature, shape=event.type))  + geom_point(size=2) 
+c
+
+d<- ggplot(Sales, aes(x=Date, y=Net.Sales, colour=Precipitation, shape=event.type))  + geom_point(size=2) 
+d
+
+e<- ggplot(Sales, aes(x=Date, y=Net.Sales, colour=items, shape=event.type))  + geom_point(size=2) 
+e
+
+f<- ggplot(Sales, aes(x=Date, y=Net.Sales, colour=items, shape=discount))  + geom_point(size=2) 
+f
+
+g <- ggplot(Sales, aes(x=Date, y=Net.Sales, colour=mealtype, shape=discount)) + geom_point(size=2) 
+g
+
+h<- ggplot(Sales, aes(x=Date, y=Net.Sales, colour=Temperature, shape=discount))  + geom_point(size=2) 
+h
+
+i<- ggplot(Sales, aes(x=Date, y=Net.Sales, colour=Precipitation, shape=discount))  + geom_point(size=2) 
+i
+
+j<- ggplot(Sales, aes(x=Date, y=Net.Sales, colour=event.type, shape=discount))  + geom_point(size=2) 
+j
+
+```
+```{r 2x2}
+#we want to create a 2x2 table and group by discount and event type as these features appear to be strongly realted to sales
+
+a=Sales%>%
+  group_by(discount,event.type)%>%
+  mutate(avg_sales=mean(Net.Sales))%>%
+  select(discount,event.type,avg_sales)%>%
+  unique()
+class(a)
+a
+
+yesevent=a[3,3]
+yesstreet =a[2,3]
+nostreet=a[1,3]
+noevent =a[4,3]
+as.numeric(yesevent)
+as.numeric(yesstreet)
+as.numeric(nostreet)
+as.numeric(noevent)
+print(yesevent, yesstreet, nostreet, noevent)
+#find percenage difference
+
+streetdiscountdiff <- (yesstreet - nostreet) / yesstreet
+streetdiscountdiff
+
+eventdiscountdiff <- (yesevent - noevent) / noevent
+eventdiscountdiff
+```
+Now, we want to see if the categorical variables have influence over Net Sales
+
+```{r groupby}
+GroupedMealtype <- Sales %>% group_by(mealtype) %>% summarise(
+  Net.Sales = mean(Net.Sales))
+
+GroupedLocation <- Sales %>% group_by(location) %>% summarise(
+  Net.Sales = mean(Net.Sales))
+
+Groupedeventtype <- Sales %>% group_by(event.type) %>% summarise(
+  Net.Sales = mean(Net.Sales))
+
+Groupeddiscount <- Sales %>% group_by(discount) %>% summarise(
+  Net.Sales = mean(Net.Sales))
+
+Groupedmonth <- Sales %>% group_by(month) %>% summarise(
+  Net.Sales = mean(Net.Sales))
+
+Groupeddayofweek <- Sales %>% group_by(dayofweek) %>% summarise(
+  Net.Sales = mean(Net.Sales))
+
+Groupeditems <- Sales %>% group_by(items) %>% summarise(
+  Net.Sales = mean(Net.Sales))
+
+```
+
+We will use the 5% significant level for all ANOVA examples
+
+```{r ANOVA}
+# One Way Anova (Completely Randomized Design) mealtype
+mealtypefit <- aov(Net.Sales ~ mealtype, data=Sales)
+plot(mealtypefit)
+summary(mealtypefit)
+
+# One Way Anova (Completely Randomized Design) Location
+locationfit <- aov(Net.Sales ~ location, data=Sales)
+plot(locationfit)
+summary(locationfit)
+
+# One Way Anova (Completely Randomized Design) month type
+monthfit <- aov(Net.Sales ~ month, data=Sales)
+plot(monthfit)
+summary(monthfit)
+
+# One Way Anova (Completely Randomized Design) dayofweek
+dayofweekfit <- aov(Net.Sales ~ dayofweek, data=Sales)
+plot(dayofweekfit)
+summary(dayofweekfit)
+
+#One Way Anova (Completely Randomized Design) items
+itemsfit <- aov(Net.Sales ~ items, data=Sales)
+plot(itemsfit)
+summary(itemsfit)
+```
+
+Based on the p-value of these ANOVA tests, the significant features are dayofweek
+month
+location
+items
+
+Let's try pair wise t-test to see which gropuings differ
+```{r pairwise}
+#pairwise.t.test(Sales$Net.Sales, Sales$location)
+pairwise.t.test(Sales$Net.Sales, Sales$month, p.adjust.method = "bonf")
+pairwise.t.test(Sales$Net.Sales, Sales$dayofweek, p.adjust.method = "bonf")
+#pairwise.t.test(Sales$Net.Sales,Sales$items, p.adjust.method = "bonf")
+```
+for location and items we wnat to know what are the unique alues and how many observatiosn ofr each
+```{r countobs}
+#location
+#str(Sales$location)
+Locations <- Sales%>%
+  group_by(location)%>%
+  summarise(sales_mean=mean(Net.Sales))
+Locations[order(-Locations$sales_mean),] 
+plot(Locations$location,Locations$sales_mean)
+
+```
+
+```{r itemsimportance}
+
+table(Sales$items)
+itemsnumber <- Sales%>%
+  group_by(items)%>%
+  summarise(sales_mean=mean(Net.Sales))
+itemsnumber[order(-itemsnumber$sales_mean),] 
+plot(itemsnumber$items,itemsnumber$sales_mean)
+
+```
+Based on pariwise ttest only month really impacts net sales. In fact August and October differ as well as October and NOvember. The rest are not statisically significant at the 5% significance level of a difference of means test. 
+
+August and november have lower mean net sales than october. 
+
+
+Next we want to look at the binary variables and see if those impact Net Sales
+```{r ttest}
+# independent 2-group t-test
+# where y is numeric and x is a binary factor
+discounttest <- t.test(Sales$Net.Sales~Sales$discount) 
+eventtypetest <- t.test(Sales$Net.Sales~Sales$event.type)
+
+discounttest
+
+eventtypetest
+
+```
+
+Both of these tests are statistically significant at the 5% significance level. 
+
+When a discount is offered those dates have a statistically signficiant higher mean in Net. Sales. 
+
+When it is an event and not just on the street those dates havea  statisicaly significant higher mean in Net Sales. 
+
+Now we want to see if the continuous variables affect Net Sales
+
+```{r continuous}
+#correlation
+cor(Sales$Temperature, Sales$Net.Sales)
+cor(Sales$Precipitation, Sales$Net.Sales)
+
+```
+Neither Temperature nor Precipitation has a strong linear relationship with Sale.
+
+Now we will try some linera models to use as estimations of which features relate to netsales. 
+IN each successive model features are removed due to large p values. 
+
+```{r linearmodel}
+model <- subset(Sales, select=c("Net.Sales", "mealtype", "event.type", "discount", "Temperature", "Precipitation", "month", "dayofweek", "items"))
+
+allin <- lm(Net.Sales ~ ., data=model)
+summary(allin)
+
+```
+
+```{r model2}
+model2 <- subset(Sales, select=c("Net.Sales", "event.type",  "Temperature", "month", "dayofweek", "items"))
+
+model_2 <- lm(Net.Sales ~ ., data=model2)
+summary(model_2)
+
+```
+
+```{r model3}
+model3 <- subset(Sales, select=c("Net.Sales", "event.type",  "Temperature", "month", "items"))
+
+model_3 <- lm(Net.Sales ~ ., data=model3)
+summary(model_3)
+
+```
+
+```{r model4}
+model4 <- subset(Sales, select=c("Net.Sales", "event.type",  "Temperature", "items"))
+
+model_4 <- lm(Net.Sales ~ ., data=model4)
+summary(model_4)
+
+```
+
+We also want to know if it is worht attending the event or going to the street for each date of transaction. We are saying that $300 is a mimum for it to be worth it. 
+
+```{r logistic}
+worthy <- Sales
+
+
+
+worthy$worth <- ifelse(worthy$Net.Sales > 300, 
+c(1), c(0)) 
+
+logmodel <- subset(worthy, select=c("mealtype", "discount", "Precipitation", "location", "worth", "event.type",  "Temperature", "items", "month", "dayofweek"))
+
+log <- glm(worth~., data=logmodel)
+summary(log)
+
+logmodel2 <- subset(worthy, select=c("worth", "event.type",  "Temperature", "items"))
+
+log2 <- glm(worth~., data=logmodel2)
+summary(log2)
+
+```
+Let's see how the menu items and number of quantity sold realte and sales
+
+```{r quantittysold}
+dataframe2 <- dataframe
+
+dataframe2$beverage <- ifelse(dataframe$beverage > 0, 
+c(1), c(0))
+
+dataframe2$chicken <- ifelse(dataframe$chicken > 0, 
+c(1), c(0))
+
+dataframe2$dessert <- ifelse(dataframe$dessert > 0, 
+c(1), c(0))
+
+dataframe2$empanadas <- ifelse(dataframe$empanadas > 0, 
+c(1), c(0))
+
+dataframe2$pork <- ifelse(dataframe$pork > 0, 
+c(1), c(0))
+
+dataframe2$sides <- ifelse(dataframe$sides > 0, 
+c(1), c(0))
+
+dataframe2$`cuban sandwhich` <- ifelse(dataframe$`cuban sandwhich` >0,
+c(1), c(0))
+
+qtymodel <- subset(dataframe2, select=c("Qty", "beverage", "chicken", "cuban sandwhich","daily special", "dessert", "empanadas", "pork", "sides"))
+qtymodell <- lm(Qty~ ., data=qtymodel)
+summary(qtymodell)
+
+salesmodel <- subset(dataframe2, select=c("Net.Sales", "beverage", "chicken", "cuban sandwhich","daily special", "dessert", "empanadas", "pork", "sides"))
+salesmodell <- lm(Net.Sales~., data=salesmodel)
+summary(salesmodell)
+
+```
